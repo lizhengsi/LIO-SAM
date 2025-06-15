@@ -15,8 +15,6 @@
 #include <visualization_msgs/Marker.h>
 #include <visualization_msgs/MarkerArray.h>
 
-#include <opencv/cv.h>
-
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/search/impl/search.hpp>
@@ -35,7 +33,10 @@
 #include <tf/transform_listener.h>
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
- 
+
+// #include <opencv/cv.h>
+#include <opencv2/opencv.hpp>
+
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -99,11 +100,13 @@ public:
     float lidarMaxRange;
 
     // IMU
+    int imuAxisNum;
     float imuAccNoise;
     float imuGyrNoise;
     float imuAccBiasN;
     float imuGyrBiasN;
     float imuGravity;
+    float imuAccNorm;
     float imuRPYWeight;
     vector<double> extRotV;
     vector<double> extRPYV;
@@ -200,11 +203,13 @@ public:
         nh.param<float>("lio_sam/lidarMinRange", lidarMinRange, 1.0);
         nh.param<float>("lio_sam/lidarMaxRange", lidarMaxRange, 1000.0);
 
+        nh.param<int>("lio_sam/imuAxisNum", imuAxisNum, 9);
         nh.param<float>("lio_sam/imuAccNoise", imuAccNoise, 0.01);
         nh.param<float>("lio_sam/imuGyrNoise", imuGyrNoise, 0.001);
         nh.param<float>("lio_sam/imuAccBiasN", imuAccBiasN, 0.0002);
         nh.param<float>("lio_sam/imuGyrBiasN", imuGyrBiasN, 0.00003);
         nh.param<float>("lio_sam/imuGravity", imuGravity, 9.80511);
+        nh.param<float>("lio_sam/imuAccNorm", imuAccNorm, 9.80511);
         nh.param<float>("lio_sam/imuRPYWeight", imuRPYWeight, 0.01);
         nh.param<vector<double>>("lio_sam/extrinsicRot", extRotV, vector<double>());
         nh.param<vector<double>>("lio_sam/extrinsicRPY", extRPYV, vector<double>());
@@ -254,6 +259,7 @@ public:
         sensor_msgs::Imu imu_out = imu_in;
         // rotate acceleration
         Eigen::Vector3d acc(imu_in.linear_acceleration.x, imu_in.linear_acceleration.y, imu_in.linear_acceleration.z);
+        acc *= (imuGravity / imuAccNorm);
         acc = extRot * acc;
         imu_out.linear_acceleration.x = acc.x();
         imu_out.linear_acceleration.y = acc.y();
@@ -267,6 +273,11 @@ public:
         // rotate roll pitch yaw
         Eigen::Quaterniond q_from(imu_in.orientation.w, imu_in.orientation.x, imu_in.orientation.y, imu_in.orientation.z);
         Eigen::Quaterniond q_final = q_from * extQRPY;
+        if (imuAxisNum == 6)
+        {
+            q_final = extQRPY;
+        }
+        q_final.normalize();
         imu_out.orientation.x = q_final.x();
         imu_out.orientation.y = q_final.y();
         imu_out.orientation.z = q_final.z();

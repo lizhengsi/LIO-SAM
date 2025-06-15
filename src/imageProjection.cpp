@@ -30,6 +30,20 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(OusterPointXYZIRT,
     (uint8_t, ring, ring) (uint16_t, noise, noise) (uint32_t, range, range)
 )
 
+struct LivoxPointXYZRTLT {
+    PCL_ADD_POINT4D;
+    float intensity;       // the value is reflectivity, 0.0~255.0
+    uint8_t   tag;             // livox tag
+    uint8_t   line;            // laser number in lidar
+    double timestamp;       // Timestamp of point
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+}EIGEN_ALIGN16;
+POINT_CLOUD_REGISTER_POINT_STRUCT (LivoxPointXYZRTLT,
+    (float, x, x) (float, y, y) (float, z, z) (float, intensity, intensity) (unsigned char, tag, tag) (unsigned char, line, line)
+    (double, timestamp, timestamp)
+)
+
 // Use the Velodyne point format as a common representation
 using PointXYZIRT = VelodynePointXYZIRT;
 
@@ -68,6 +82,7 @@ private:
 
     pcl::PointCloud<PointXYZIRT>::Ptr laserCloudIn;
     pcl::PointCloud<OusterPointXYZIRT>::Ptr tmpOusterCloudIn;
+    pcl::PointCloud<LivoxPointXYZRTLT>::Ptr tmpLivoxCloudIn;
     pcl::PointCloud<PointType>::Ptr   fullCloud;
     pcl::PointCloud<PointType>::Ptr   extractedCloud;
 
@@ -108,6 +123,7 @@ public:
     {
         laserCloudIn.reset(new pcl::PointCloud<PointXYZIRT>());
         tmpOusterCloudIn.reset(new pcl::PointCloud<OusterPointXYZIRT>());
+        tmpLivoxCloudIn.reset(new pcl::PointCloud<LivoxPointXYZRTLT>());
         fullCloud.reset(new pcl::PointCloud<PointType>());
         extractedCloud.reset(new pcl::PointCloud<PointType>());
 
@@ -204,7 +220,7 @@ public:
         // convert cloud
         currentCloudMsg = std::move(cloudQueue.front());
         cloudQueue.pop_front();
-        if (sensor == SensorType::VELODYNE || sensor == SensorType::LIVOX)
+        if (sensor == SensorType::VELODYNE)
         {
             pcl::moveFromROSMsg(currentCloudMsg, *laserCloudIn);
         }
@@ -225,6 +241,33 @@ public:
                 dst.ring = src.ring;
                 dst.time = src.t * 1e-9f;
             }
+        }
+        else if (sensor == SensorType::LIVOX)
+        {
+            // Convert to Velodyne format
+            double time_base = currentCloudMsg.header.stamp.toSec();
+            pcl::moveFromROSMsg(currentCloudMsg, *tmpLivoxCloudIn);
+            laserCloudIn->points.resize(tmpLivoxCloudIn->size());
+            laserCloudIn->is_dense = tmpLivoxCloudIn->is_dense;
+            for (size_t i = 0; i < tmpLivoxCloudIn->size(); i++)
+            {
+                auto &src = tmpLivoxCloudIn->points[i];
+                auto &dst = laserCloudIn->points[i];
+                dst.x = src.x;
+                dst.y = src.y;
+                dst.z = src.z;
+                dst.intensity = static_cast<float>(src.intensity);
+                dst.ring = static_cast<uint16_t>(src.line);
+                dst.time = static_cast<double>(src.timestamp) * 1e-9 - time_base;
+                // std::cout << "dst.time:" << dst.time << ", base:" << std::to_string(time_base) << ", time:" << std::to_string(static_cast<double>(src.timestamp) * 1e-9) << std::endl;
+            }
+            auto tmpMsg = currentCloudMsg;
+            pcl::toROSMsg(*laserCloudIn, tmpMsg);
+            currentCloudMsg.fields = tmpMsg.fields;
+            currentCloudMsg.data = tmpMsg.data;
+            currentCloudMsg.is_bigendian = tmpMsg.is_bigendian;
+            currentCloudMsg.point_step = tmpMsg.point_step;
+            currentCloudMsg.row_step = tmpMsg.row_step;
         }
         else
         {
@@ -555,7 +598,7 @@ public:
                 columnIdn = columnIdnCountVec[rowIdn];
                 columnIdnCountVec[rowIdn] += 1;
             }
-            
+
             if (columnIdn < 0 || columnIdn >= Horizon_SCAN)
                 continue;
 
